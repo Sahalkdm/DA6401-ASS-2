@@ -1,4 +1,9 @@
-# DA6401 Assignment-2 Skeleton Guide
+# DA6401 Assignment-2
+
+## 🔗 Project Links
+
+- 📄 **Report**: [Click here to view](https://wandb.ai/sahal_k-indian-institute-of-technology-madras/da6401_assignment2/reports/DA6401-Assignment-2--VmlldzoxNjUyNjA0NA)
+- 💻 **GitHub Repository**: [Click here to view](https://github.com/Sahalkdm/DA6401-ASS-2)
 
 This repository is an instructional skeleton for building the complete visual perception pipeline on Oxford-IIIT Pet.
 
