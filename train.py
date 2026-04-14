@@ -15,7 +15,7 @@ from torch.utils.data import DataLoader, random_split
 
 from data.pets_dataset import OxfordIIITPetDataset
 from models.multitask import MultiTaskPerceptionModel
-from losses.iou_loss import GIoULoss
+from losses.iou_loss import GIoULoss, IoULoss
 from losses.dice_loss import DiceLoss
 
 import torch.nn.functional as F
@@ -36,34 +36,39 @@ import torch.nn.functional as F
 
 @torch.no_grad()
 def compute_mean_iou(pred_box, tgt_box, eps=1e-6):
-    # No clamp(0, 1) here anymore because our coordinates are in actual pixels (0 to 224)!
-    
-    # Extract coordinates directly (Format: xmin, ymin, xmax, ymax)
-    px1, py1, px2, py2 = pred_box[:, 0], pred_box[:, 1], pred_box[:, 2], pred_box[:, 3]
-    tx1, ty1, tx2, ty2 = tgt_box[:, 0], tgt_box[:, 1], tgt_box[:, 2], tgt_box[:, 3]
-    
-    # 1. Calculate Intersection
-    # Find the coordinates of the intersection rectangle
-    inter_x1 = torch.max(px1, tx1)
-    inter_y1 = torch.max(py1, ty1)
-    inter_x2 = torch.min(px2, tx2)
-    inter_y2 = torch.min(py2, ty2)
-    
-    # Calculate intersection width and height (clamp to 0 to avoid negative areas)
-    iw = (inter_x2 - inter_x1).clamp(min=0)
-    ih = (inter_y2 - inter_y1).clamp(min=0)
-    inter_area = iw * ih
-    
-    # 2. Calculate Union
-    # Area of predicted and target boxes
-    pred_area = (px2 - px1).clamp(min=0) * (py2 - py1).clamp(min=0)
-    tgt_area = (tx2 - tx1).clamp(min=0) * (ty2 - ty1).clamp(min=0)
-    
+    """
+    Calculates IoU for [cx, cy, w, h] in pixel space.
+    """
+    # 1. Convert Predicted [cx, cy, w, h] -> [x1, y1, x2, y2]
+    p_x1 = pred_box[:, 0] - pred_box[:, 2] / 2
+    p_y1 = pred_box[:, 1] - pred_box[:, 3] / 2
+    p_x2 = pred_box[:, 0] + pred_box[:, 2] / 2
+    p_y2 = pred_box[:, 1] + pred_box[:, 3] / 2
+
+    # 2. Convert Target [cx, cy, w, h] -> [x1, y1, x2, y2]
+    t_x1 = tgt_box[:, 0] - tgt_box[:, 2] / 2
+    t_y1 = tgt_box[:, 1] - tgt_box[:, 3] / 2
+    t_x2 = tgt_box[:, 0] + tgt_box[:, 2] / 2
+    t_y2 = tgt_box[:, 1] + tgt_box[:, 3] / 2
+
+    # 3. Intersection math (Same as before)
+    inter_x1 = torch.max(p_x1, t_x1)
+    inter_y1 = torch.max(p_y1, t_y1)
+    inter_x2 = torch.min(p_x2, t_x2)
+    inter_y2 = torch.min(p_y2, t_y2)
+
+    inter_w = (inter_x2 - inter_x1).clamp(min=0)
+    inter_h = (inter_y2 - inter_y1).clamp(min=0)
+    inter_area = inter_w * inter_h
+
+    # 4. Union math
+    # We use the w and h directly from the input for areas
+    pred_area = pred_box[:, 2].clamp(min=0) * pred_box[:, 3].clamp(min=0)
+    tgt_area = tgt_box[:, 2].clamp(min=0) * tgt_box[:, 3].clamp(min=0)
     union_area = pred_area + tgt_area - inter_area
-    
-    # 3. Calculate IoU
+
+    # 5. Final IoU
     iou = inter_area / (union_area + eps)
-    
     return iou.mean().item()
 
 @torch.no_grad()
@@ -141,16 +146,27 @@ class MultitaskWrapper(Dataset):
         mask_tensor = out.get("mask", None)
         
         # 4. Convert augmented YOLO bbox to absolute Pascal VOC [xmin, ymin, xmax, ymax]
+        # out_bbox = None
+        # if bbox is not None and len(out["bboxes"]) > 0:
+        #     cx, cy, w, h = out["bboxes"][0]
+        #     _, H, W = img_tensor.shape # Get final image dimensions (e.g., 224x224)
+            
+        #     xmin = (cx - w / 2) * W
+        #     ymin = (cy - h / 2) * H
+        #     xmax = (cx + w / 2) * W
+        #     ymax = (cy + h / 2) * H
+        #     out_bbox = [xmin, ymin, xmax, ymax]
         out_bbox = None
         if bbox is not None and len(out["bboxes"]) > 0:
-            cx, cy, w, h = out["bboxes"][0]
-            _, H, W = img_tensor.shape # Get final image dimensions (e.g., 224x224)
+            cx_norm, cy_norm, w_norm, h_norm = out["bboxes"][0]
+            _, H, W = img_tensor.shape # This will be 224x224 (VGG11 size)
             
-            xmin = (cx - w / 2) * W
-            ymin = (cy - h / 2) * H
-            xmax = (cx + w / 2) * W
-            ymax = (cy + h / 2) * H
-            out_bbox = [xmin, ymin, xmax, ymax]
+            out_bbox = [
+                cx_norm * W,  # x_center in pixels
+                cy_norm * H,  # y_center in pixels
+                w_norm * W,   # width in pixels
+                h_norm * H    # height in pixels
+            ]
 
         return {
             "image": img_tensor,
@@ -284,6 +300,14 @@ def evaluate(model, loader, losses, device, use_amp, lambdas, split_name="val"):
 
     return {"loss": total_loss / len(loader), "acc": acc, "f1": f1, "iou": iou, "dice": dice}
 
+class CombinedLocalizationLoss(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.mse = nn.MSELoss()
+        self.iou = IoULoss(reduction="mean")
+
+    def forward(self, pred, target):
+        return self.mse(pred, target) + self.iou(pred, target)
 
 # ─── Main Training Loop ───────────────────────────────────────────────────────
 def main():
@@ -372,10 +396,11 @@ def main():
     # ── Losses & Optimizer ───────────────────────────────────────────────
     losses = {
         'cls': nn.CrossEntropyLoss(),
-        'loc': nn.MSELoss(),
-        'seg': nn.CrossEntropyLoss()
+        'loc': CombinedLocalizationLoss(),
+        'seg': DiceLoss()
     }
-    lambdas = {'cls': 1.0, 'loc': 0.01, 'seg': 1.0} # Loss weighting factors
+    
+    lambdas = {'cls': 1.25, 'loc': 0.01, 'seg': 1.0} # Loss weighting factors
     optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
     scaler = torch.amp.GradScaler('cuda', enabled=use_amp)
 
@@ -436,7 +461,7 @@ def main():
         
         if combined > best_score:
             best_score = combined
-            ckpt_path  = Path(args.checkpoint_dir) / "best_multitask.pth"
+            ckpt_path  = Path(args.checkpoint_dir) / "best_multitask1.pth"
             torch.save(dict(epoch=epoch, model_state_dict=model.state_dict(),
                             val_f1=vl["f1"], val_iou=vl["iou"], val_dice=vl["dice"],
                             combined=combined, args=vars(args)), ckpt_path)

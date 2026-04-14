@@ -114,7 +114,7 @@ def main():
         from torch.utils.data import DataLoader
         from sklearn.metrics import f1_score
         from data.pets_dataset import OxfordIIITPetDataset
-        from da6401_assignment_2.train import collate_fn_multitask, compute_mean_iou, compute_dice
+        from train import collate_fn_multitask, compute_mean_iou, compute_dice
 
         transform = get_transform(args.image_size)
 
@@ -151,7 +151,7 @@ def main():
 
                 if batch["bbox"] is not None:
                     idx = batch["bbox_indices"]
-                    pred = out["localization"][idx] / args.image_size
+                    pred = out["localization"][idx] # / args.image_size
                     tgt = batch["bbox"].to(device)
 
                     iou_sum += compute_mean_iou(pred, tgt)
