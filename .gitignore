@@ -1,0 +1,9 @@
+/pets_data
+/wandb
+/data/__pycache__
+/models/__pycache__
+/venv_ass2
+/losses/__pycache__
+*.pth
+*.png
+/__pycache__
