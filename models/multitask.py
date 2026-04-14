@@ -90,7 +90,7 @@ class MultiTaskPerceptionModel(nn.Module):
         # LOCALIZATION BRANCH
         # Match your VGG11Localizer forward logic (Clamp & Scale)
         raw_coords = self.reg_head(flat)
-        loc_coords = raw_coords.clamp(0, 1) * self.image_size
+        loc_coords = raw_coords.clamp(0, 1)
 
         # SEGMENTATION BRANCH
         # Match your VGG11UNet forward logic exactly
