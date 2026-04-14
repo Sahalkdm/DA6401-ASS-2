@@ -17,7 +17,7 @@ class MultiTaskPerceptionModel(nn.Module):
 
     def __init__(self, num_breeds: int = 37, seg_classes: int = 3, in_channels: int = 3, 
                  classifier_path: str = "classifier.pth", localizer_path: str = "localizer.pth", 
-                 unet_path: str = "unet.pth", device='cuda', image_size: int = 224):
+                 unet_path: str = "unet.pth", device='cpu', image_size: int = 224):
         
         super().__init__() 
         self.image_size = image_size
@@ -54,9 +54,9 @@ class MultiTaskPerceptionModel(nn.Module):
 
         # 4. LOAD & INJECT WEIGHTS
         print("Loading weights into PyTorch...")
-        cls_ckpt = torch.load(classifier_path, map_location=device)
-        loc_ckpt = torch.load(localizer_path, map_location=device)
-        seg_ckpt = torch.load(unet_path, map_location=device)
+        cls_ckpt = torch.load(classifier_path, map_location=torch.device('cpu'))
+        loc_ckpt = torch.load(localizer_path, map_location=torch.device('cpu'))
+        seg_ckpt = torch.load(unet_path, map_location=torch.device('cpu'))
 
         cls_state = cls_ckpt.get('model_state_dict', cls_ckpt)
         loc_state = loc_ckpt.get('model_state_dict', loc_ckpt)
